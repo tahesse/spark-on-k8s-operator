@@ -325,7 +325,7 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 					mountPath, key))
 			}
 		} else {
-			glog.Errorf("Error when getting custom configuration map %v", err)
+			glog.Errorf("Could not get custom spark config map: %v", err)
 		}
 	}
 

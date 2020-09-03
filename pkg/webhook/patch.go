@@ -302,7 +302,7 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 		patchOps = append(patchOps, addConfigMapVolume(pod, *sparkConfigMapName, config.SparkConfigMapVolumeName))
 		// TODO: Use subpath from user provided options. Might be a loop since there could be multiple files in configmap
 		// Get config map keys
-		cm, err := client.CoreV1().ConfigMaps(pod.Namespace).Get(*sparkConfigMapName, metav1.GetOptions{})
+		cm, err := client.CoreV1().ConfigMaps(app.Namespace).Get(*sparkConfigMapName, metav1.GetOptions{})
 		if err == nil {
 			for key := range cm.Data {
 				mountPath := fmt.Sprintf("/opt/spark/conf/%s", key)
@@ -311,7 +311,7 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 					mountPath, key))
 			}
 		} else {
-			glog.Errorf("Error when getting custom configuration map %v", err)
+			glog.Errorf("Could not get custom spark config map: %v", err)
 		}
 	}
 

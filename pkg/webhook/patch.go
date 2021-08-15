@@ -878,6 +878,7 @@ func addShareProcessNamespace(pod *corev1.Pod, app *v1beta2.SparkApplication) *p
 	}
 	return &patchOperation{Op: "add", Path: "/spec/shareProcessNamespace", Value: *shareProcessNamespace}
 }
+
 // Subpath support
 func addConfigMapVolumeMountSubpath(pod *corev1.Pod, configMapVolumeName string, mountPath string, subpath string) *patchOperation {
 	mount := corev1.VolumeMount{
@@ -894,7 +895,8 @@ func findVolumeMountIndex(container *corev1.Container) int {
 	// Find the driver or executor container in the pod.
 	for ; i < len(container.VolumeMounts); i++ {
 		glog.V(2).Infof("Processing mount %v(name %v)", container.VolumeMounts[i], container.VolumeMounts[i].Name)
-		if container.VolumeMounts[i].Name == "spark-conf-volume" {
+		volumeMountName := container.VolumeMounts[i].Name
+		if volumeMountName == "spark-conf-volume" || volumeMountName == "spark-conf-volume-driver" {
 			return i
 		}
 	}

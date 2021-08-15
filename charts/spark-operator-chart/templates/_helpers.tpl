@@ -74,3 +74,16 @@ Create the name of the service account to be used by spark apps
 {{- end -}}
 {{- end -}}
 
+
+{{/*
+Add annotations for the operator service account
+*/}}
+{{- define "spark-operator.annotations" -}}
+{{- if .Values.serviceAccounts.sparkoperator.annotations -}}
+{{- range $key, $val := .Values.serviceAccounts.sparkoperator.annotations }}
+  {{- $key }}: {{ $val | quote }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+

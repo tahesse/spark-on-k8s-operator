@@ -376,7 +376,11 @@ func (c *Controller) getAndUpdateExecutorState(app *v1beta2.SparkApplication) er
 			if !exists || newState != oldState {
 				if newState == v1beta2.ExecutorFailedState {
 					execContainerState := getExecutorContainerTerminatedState(pod.Status)
-					c.recordExecutorEvent(app, newState, pod.Name, execContainerState.ExitCode, execContainerState.Reason)
+					if execContainerState != nil {
+						c.recordExecutorEvent(app, newState, pod.Name, execContainerState.ExitCode, execContainerState.Reason)
+					} else {
+						c.recordExecutorEvent(app, newState, pod.Name)
+					}
 				} else {
 					c.recordExecutorEvent(app, newState, pod.Name)
 				}

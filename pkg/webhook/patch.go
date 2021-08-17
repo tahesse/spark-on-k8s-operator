@@ -896,7 +896,7 @@ func findVolumeMountIndex(container *corev1.Container) int {
 	for ; i < len(container.VolumeMounts); i++ {
 		glog.V(2).Infof("Processing mount %v(name %v)", container.VolumeMounts[i], container.VolumeMounts[i].Name)
 		volumeMountName := container.VolumeMounts[i].Name
-		if volumeMountName == "spark-conf-volume" || volumeMountName == "spark-conf-volume-driver" {
+		if volumeMountName == "spark-conf-volume" || volumeMountName == "spark-conf-volume-driver" || volumeMountName == "spark-conf-volume-exec" {
 			return i
 		}
 	}

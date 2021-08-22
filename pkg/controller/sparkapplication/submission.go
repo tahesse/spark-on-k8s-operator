@@ -376,7 +376,7 @@ func addExecutorConfOptions(app *v1beta2.SparkApplication, submissionID string) 
 
 	if app.Spec.Executor.ServiceAccount != nil {
 		executorConfOptions = append(executorConfOptions,
-			fmt.Sprintf("%s=%s", config.SparkDriverExecutorAccountName, *app.Spec.Executor.ServiceAccount))
+			fmt.Sprintf("%s=%s", config.SparkExecutorAccountName, *app.Spec.Executor.ServiceAccount))
 	}
 
 	if app.Spec.Executor.DeleteOnTermination != nil {

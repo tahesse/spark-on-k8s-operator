@@ -17,6 +17,8 @@ limitations under the License.
 package config
 
 const (
+	// DefaultSparkPropertiesFile is the
+	DefaultSparkPropertiesFile = "spark.properties"
 	// DefaultSparkConfDir is the default directory for Spark configuration files if not specified.
 	// This directory is where the Spark ConfigMap is mounted in the driver and executor containers.
 	DefaultSparkConfDir = "/opt/spark/conf"

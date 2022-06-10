@@ -17,6 +17,7 @@ limitations under the License.
 package webhook
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -409,7 +410,56 @@ func TestPatchSparkPod_ConfigMaps(t *testing.T) {
 	assert.Equal(t, "/path/to/bar", modifiedPod.Spec.Containers[0].VolumeMounts[1].MountPath)
 }
 
-func TestPatchSparkPod_SparkConfigMap(t *testing.T) {
+func TestPatchSparkPod_ReplaceSparkConfigMap(t *testing.T) {
+	sparkConfMapName := "spark-conf"
+	app := &v1beta2.SparkApplication{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "spark-test",
+			UID:  "spark-test-1",
+			Namespace: "spark-apps",
+		},
+		Spec: v1beta2.SparkApplicationSpec{
+			SparkConfigMap: &sparkConfMapName,
+		},
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "spark-driver",
+			Labels: map[string]string{
+				config.SparkRoleLabel:               config.SparkDriverRole,
+				config.LaunchedBySparkOperatorLabel: "true",
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name:  config.SparkDriverContainerName,
+					Image: "spark-driver:latest",
+					VolumeMounts: []corev1.VolumeMount{
+						{Name: "spark-conf-volume-driver", ReadOnly: false, MountPath: "/opt/spark/conf"},
+					},
+				},
+			},
+		},
+	}
+
+	modifiedPod, err := getModifiedPod(pod, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assert.Equal(t, 1, len(modifiedPod.Spec.Volumes))
+	assert.Equal(t, config.SparkConfigMapVolumeName, modifiedPod.Spec.Volumes[0].Name)
+	assert.True(t, modifiedPod.Spec.Volumes[0].ConfigMap != nil)
+	assert.Equal(t, 2, len(modifiedPod.Spec.Containers[0].VolumeMounts))
+	assert.Equal(t, fmt.Sprintf("%s/%s", config.DefaultSparkConfDir, config.DefaultSparkPropertiesFile), modifiedPod.Spec.Containers[0].VolumeMounts[0].MountPath)
+	assert.Equal(t, fmt.Sprintf("%s/%s", config.DefaultSparkConfDir, config.DefaultSparkPropertiesFile), modifiedPod.Spec.Containers[0].VolumeMounts[1].MountPath)
+	assert.Equal(t, 1, len(modifiedPod.Spec.Containers[0].Env))
+	assert.Equal(t, config.DefaultSparkConfDir, modifiedPod.Spec.Containers[0].Env[0].Value)
+}
+
+func TestPatchSparkPod_AddSparkConfigMap(t *testing.T) {
 	sparkConfMapName := "spark-conf"
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1792,7 +1842,48 @@ func TestPatchSparkPod_Lifecycle(t *testing.T) {
 }
 
 func getModifiedPod(pod *corev1.Pod, app *v1beta2.SparkApplication) (*corev1.Pod, error) {
+	// TODO parameterize client and move client response (= configMap mocks) outside into the test cases where needed
 	fakeClient := kubeclientfake.NewSimpleClientset()
+	sparkAppNamespace := "spark-apps"
+	// Create driver ConfigMap which holds the initial configuration for the SparkContext.
+	cm := corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "spark-conf-volume-driver",
+			Namespace: sparkAppNamespace,
+		},
+		Data: map[string]string{
+			"spark.properties": "spark.driver.cores=1",
+			// FIXME put keys from upstream spark
+		},
+	}
+	_, err := fakeClient.CoreV1().ConfigMaps(sparkAppNamespace).Create(context.TODO(), &cm, metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	// Create ConfigMap in SparkApplication namespace with a `spark.properties` which is to SubPath patch into the existing Pod
+	// identified by the SparkApplication.Spec.sparkConfigMap
+	cm1 := corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "spark-conf",
+			Namespace: sparkAppNamespace,
+		},
+		Data: map[string]string{
+			"spark.properties": "spark.driver.cores=2",
+		},
+	}
+	_, err1 := fakeClient.CoreV1().ConfigMaps(sparkAppNamespace).Create(context.TODO(), &cm1, metav1.CreateOptions{})
+	if err1 != nil {
+		return nil, err1
+	}
+	// Exert patch op from the test case
 	patchOps := patchSparkPod(pod.DeepCopy(), app, fakeClient)
 	patchBytes, err := json.Marshal(patchOps)
 	if err != nil {

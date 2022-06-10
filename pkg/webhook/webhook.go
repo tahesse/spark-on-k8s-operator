@@ -538,7 +538,9 @@ func admitScheduledSparkApplications(review *admissionv1.AdmissionReview, enforc
 func mutatePods(
 	review *admissionv1.AdmissionReview,
 	lister crdlisters.SparkApplicationLister,
-	sparkJobNs string, client kubernetes.Interface) (*admissionv1.AdmissionResponse, error) {
+	sparkJobNs string,
+	client kubernetes.Interface,
+) (*admissionv1.AdmissionResponse, error) {
 	raw := review.Request.Object.Raw
 	pod := &corev1.Pod{}
 	if err := json.Unmarshal(raw, pod); err != nil {

@@ -294,6 +294,8 @@ func addEnvironmentVariable(pod *corev1.Pod, envName, envValue string) *patchOpe
 }
 
 /*
+	Related issue: https://github.com/GoogleCloudPlatform/spark-on-k8s-operator/issues/216
+	---
 	Previous behavior:
 	  1. Change SPARK_CONF_DIR to /etc/spark/conf (otherwise the default spark.properties will be overwritten)
 	  2. Add VolumeMount for ConfigMap
@@ -304,11 +306,11 @@ func addEnvironmentVariable(pod *corev1.Pod, envName, envValue string) *patchOpe
 	---
 	Proposed behavior:
 	  1. Do not change SPARK_CONF_DIR from /opt/spark/conf
-	  2. Change VolumeMount mountPath for spark.properties to subPath
+	  2. Change VolumeMount mountPath for `spark.properties` to subPath
 	  3. subPath all other keys from the sparkConfMap spec provided ConfigMap
 	---
-	Potential Todo:
-	  * How to handle duplicate files? (particularly `spark.properties` which carries the configuration for driver and executor)
+	Edge cases:
+	  * Handling of duplicate `spark.properties` files which carry the configuration for the driver and executor(s)
  */
 func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client kubernetes.Interface) []patchOperation {
 	var patchOps []patchOperation
@@ -347,6 +349,10 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 		if err == nil && len(configMap.Data) > 0 {
 			glog.V(2).Infof("Found ConfigMap with data: %v", configMap.Data)
 			for key := range configMap.Data {
+				if key == config.DefaultSparkPropertiesFile {
+					glog.V(2).Infof("Ignoring spark.properties")
+					continue
+				}
 				mountPath := fmt.Sprintf("%s/%s", config.DefaultSparkConfDir, key)
 				glog.V(2).Infof("Adding mountPath %v", mountPath)
 				vspmPatchOp := addConfigMapVolumeMountSubPath(pod, config.SparkConfigMapVolumeName, mountPath, key)
@@ -907,7 +913,7 @@ func addShareProcessNamespace(pod *corev1.Pod, app *v1beta2.SparkApplication) *p
 	return &patchOperation{Op: "add", Path: "/spec/shareProcessNamespace", Value: *shareProcessNamespace}
 }
 
-// Subpath support
+// SubPath support
 func addConfigMapVolumeMountSubPath(pod *corev1.Pod, configMapVolumeName string, mountPath string, subPath string) *patchOperation {
 	mount := corev1.VolumeMount{
 		Name:      configMapVolumeName,
@@ -923,7 +929,7 @@ func findVolumeMountIndex(container *corev1.Container) int {
 	// https://github.com/apache/spark/blob/32054e1e72edcc3bc34fb13267141e888d015578/resource-managers/kubernetes/core/src/main/scala/org/apache/spark/deploy/k8s/Constants.scala#L72-L73
 	for i := 0; i < len(container.VolumeMounts); i++ {
 		glog.V(2).Infof("Processing mount %v(name %v)", container.VolumeMounts[i], container.VolumeMounts[i].Name)
-		if container.VolumeMounts[i].Name == "spark-conf-volume-driver" || container.VolumeMounts[i].Name == "spark-conf-volume-exec" {
+		if container.VolumeMounts[i].Name == config.SparkConfigMapVolumeDriverName || container.VolumeMounts[i].Name == config.SparkConfigMapVolumeExecName {
 			return i
 		}
 	}

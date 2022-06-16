@@ -319,7 +319,7 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 		// Add Volume populated by the ConfigMap
 		patchOps = append(patchOps, addConfigMapVolume(pod, *sparkConfigMapName, config.SparkConfigMapVolumeName))
 		containerIndex := findContainer(pod)
-		// FIXME containerIndex == -1
+		// Note: no error handling is done for `containerIndex == -1` because we anticipate the Pod to handle the Container lifecycle
 		glog.V(2).Infof("SubPath patching existing VolumeMounts: %v", pod.Spec.Containers[containerIndex].VolumeMounts)
 		volumeMountIndex := findVolumeMountIndex(&pod.Spec.Containers[containerIndex])
 		if volumeMountIndex >= 0 {

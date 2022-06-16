@@ -33,6 +33,72 @@ import (
 	kubeclientfake "k8s.io/client-go/kubernetes/fake"
 )
 
+// We opt for a struct because it is more robust towards future declaration alterations
+type podModificationParams struct {
+	pod			*corev1.Pod
+	app			*v1beta2.SparkApplication
+	fakeClient  *kubeclientfake.Clientset
+}
+
+func(params *podModificationParams) fillDefaults() {
+	if params.fakeClient == nil {
+		params.fakeClient = kubeclientfake.NewSimpleClientset()
+	}
+}
+
+func getModifiedPod(params podModificationParams) (*corev1.Pod, error) {
+	// assign default values
+	params.fillDefaults()
+
+	app := params.app
+	pod := params.pod
+	fakeClient := params.fakeClient
+	sparkAppNamespace := app.Namespace
+	// Create driver ConfigMap which holds the initial configuration for the SparkContext
+	sparkDriverConfigMap := corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "spark-conf-volume-driver",
+			Namespace: sparkAppNamespace,
+		},
+		Data: map[string]string{
+			"spark.properties": "#Java properties built from Kubernetes config map with name: spark-drv-b95ba7814d619411-conf-map\n#Fri Jun 10 11:30:49 UTC 2022\nspark.driver.port=7078\nspark.submit.pyFiles=\nspark.kubernetes.resource.type=python\nspark.kubernetes.driver.label.sparkoperator.k8s.io/launched-by-spark-operator=true\nspark.kubernetes.namespace=spark-apps\nspark.kubernetes.executor.label.sparkoperator.k8s.io/submission-id=b2d49c95-af88-41cb-b1db-12f13d979725\nspark.kubernetes.driver.label.sparkoperator.k8s.io/submission-id=b2d49c95-af88-41cb-b1db-12f13d979725\nspark.kubernetes.submitInDriver=true\nspark.kubernetes.authenticate.driver.serviceAccountName=spark\nspark.kubernetes.driver.pod.name=guest-ec3c43c8-068a-45ce-bba0-0f48986a78f6-driver\nspark.executor.instances=2\nspark.kubernetes.executor.container.image=foo/spark-py\\:dev\nspark.kubernetes.pyspark.pythonVersion=3\nspark.kubernetes.driver.label.sparkoperator.k8s.io/app-name=guest-ec3c43c8-068a-45ce-bba0-0f48986a78f6\nspark.executor.memory=1g\nspark.driver.memory=1g\nspark.master=k8s\\://https\\://172.20.138.34\\:443\nspark.driver.cores=1\nspark.kubernetes.driver.limit.cores=1000m\nspark.kubernetes.executor.limit.cores=1000m\nspark.executor.cores=1\nspark.kubernetes.submission.waitAppCompletion=false\nspark.app.name=guest-ec3c43c8-068a-45ce-bba0-0f48986a78f6\nspark.submit.deployMode=cluster\nspark.driver.host=spark-1f1446814d61934f-driver-svc.spark-apps.svc\nspark.driver.blockManager.port=7079\nspark.app.id=spark-cd7b0f4577354e6f9309190b67c75aa9\nspark.kubernetes.container.image=foo/spark-py\\:dev\nspark.kubernetes.executor.label.sparkoperator.k8s.io/launched-by-spark-operator=true\nspark.kubernetes.memoryOverheadFactor=0.4\nspark.kubernetes.executor.label.sparkoperator.k8s.io/app-name=guest-ec3c43c8-068a-45ce-bba0-0f48986a78f6\nspark.kubernetes.driver.label.app=testing",
+		},
+	}
+	_, err := fakeClient.CoreV1().ConfigMaps(sparkAppNamespace).Create(context.TODO(), &sparkDriverConfigMap, metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	// Exert patch op from the test case
+	patchOps := patchSparkPod(pod.DeepCopy(), app, fakeClient)
+	patchBytes, err := json.Marshal(patchOps)
+	if err != nil {
+		return nil, err
+	}
+	patch, err := jsonpatch.DecodePatch(patchBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	original, err := json.Marshal(pod)
+	if err != nil {
+		return nil, err
+	}
+	modified, err := patch.Apply(original)
+	if err != nil {
+		return nil, err
+	}
+	modifiedPod := &corev1.Pod{}
+	if err := json.Unmarshal(modified, modifiedPod); err != nil {
+		return nil, err
+	}
+
+	return modifiedPod, nil
+}
+
 func TestPatchSparkPod_OwnerReference(t *testing.T) {
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
@@ -60,7 +126,7 @@ func TestPatchSparkPod_OwnerReference(t *testing.T) {
 	}
 
 	// Test patching a pod without existing OwnerReference and Volume.
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +135,7 @@ func TestPatchSparkPod_OwnerReference(t *testing.T) {
 	// Test patching a pod with existing OwnerReference and Volume.
 	pod.OwnerReferences = append(pod.OwnerReferences, metav1.OwnerReference{Name: "owner-reference1"})
 
-	modifiedPod, err = getModifiedPod(pod, app)
+	modifiedPod, err = getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +202,7 @@ func TestPatchSparkPod_Local_Volumes(t *testing.T) {
 		},
 	}
 
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +266,7 @@ func TestPatchSparkPod_Volumes_Subpath(t *testing.T) {
 	}
 
 	// Test patching a pod without existing OwnerReference and Volume.
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +337,7 @@ func TestPatchSparkPod_Volumes(t *testing.T) {
 	}
 
 	// Test patching a pod without existing OwnerReference and Volume.
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +355,7 @@ func TestPatchSparkPod_Volumes(t *testing.T) {
 		Name: "volume1",
 	})
 
-	modifiedPod, err = getModifiedPod(pod, app)
+	modifiedPod, err = getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +413,7 @@ func TestPatchSparkPod_Affinity(t *testing.T) {
 	}
 
 	// Test patching a pod with a pod Affinity.
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +461,7 @@ func TestPatchSparkPod_ConfigMaps(t *testing.T) {
 		},
 	}
 
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,12 +477,13 @@ func TestPatchSparkPod_ConfigMaps(t *testing.T) {
 }
 
 func TestPatchSparkPod_ReplaceSparkConfigMap(t *testing.T) {
+	sparkAppNamespace := "spark-apps"
 	sparkConfMapName := "spark-conf"
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "spark-test",
 			UID:  "spark-test-1",
-			Namespace: "spark-apps",
+			Namespace: sparkAppNamespace,
 		},
 		Spec: v1beta2.SparkApplicationSpec{
 			SparkConfigMap: &sparkConfMapName,
@@ -444,7 +511,29 @@ func TestPatchSparkPod_ReplaceSparkConfigMap(t *testing.T) {
 		},
 	}
 
-	modifiedPod, err := getModifiedPod(pod, app)
+	fakeClient := kubeclientfake.NewSimpleClientset()
+	// Create ConfigMap in SparkApplication namespace with a `spark.properties` which is to SubPath patch into the existing Pod
+	// identified by the SparkApplication.Spec.sparkConfigMap
+	customSparkConfigMap := corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "spark-conf",
+			Namespace: sparkAppNamespace,
+		},
+		Data: map[string]string{
+			"spark.properties": "spark.driver.cores=2",
+		},
+	}
+	_, err := fakeClient.CoreV1().ConfigMaps(sparkAppNamespace).Create(context.TODO(), &customSparkConfigMap, metav1.CreateOptions{})
+	assert.Equal(t, nil, err)
+	if err != nil {
+		return
+	}
+
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app, fakeClient: fakeClient})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,19 +541,21 @@ func TestPatchSparkPod_ReplaceSparkConfigMap(t *testing.T) {
 	assert.Equal(t, 1, len(modifiedPod.Spec.Volumes))
 	assert.Equal(t, config.SparkConfigMapVolumeName, modifiedPod.Spec.Volumes[0].Name)
 	assert.True(t, modifiedPod.Spec.Volumes[0].ConfigMap != nil)
-	assert.Equal(t, 2, len(modifiedPod.Spec.Containers[0].VolumeMounts))
+	//!\\ We exclusively expect a single mount because we ignore `spark.properties` SubPath VolumeMounts
+	assert.Equal(t, 1, len(modifiedPod.Spec.Containers[0].VolumeMounts))
 	assert.Equal(t, fmt.Sprintf("%s/%s", config.DefaultSparkConfDir, config.DefaultSparkPropertiesFile), modifiedPod.Spec.Containers[0].VolumeMounts[0].MountPath)
-	assert.Equal(t, fmt.Sprintf("%s/%s", config.DefaultSparkConfDir, config.DefaultSparkPropertiesFile), modifiedPod.Spec.Containers[0].VolumeMounts[1].MountPath)
 	assert.Equal(t, 1, len(modifiedPod.Spec.Containers[0].Env))
 	assert.Equal(t, config.DefaultSparkConfDir, modifiedPod.Spec.Containers[0].Env[0].Value)
 }
 
 func TestPatchSparkPod_AddSparkConfigMap(t *testing.T) {
+	sparkAppNamespace := "spark-apps"
 	sparkConfMapName := "spark-conf"
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "spark-test",
 			UID:  "spark-test-1",
+			Namespace: sparkAppNamespace,
 		},
 		Spec: v1beta2.SparkApplicationSpec{
 			SparkConfigMap: &sparkConfMapName,
@@ -489,7 +580,29 @@ func TestPatchSparkPod_AddSparkConfigMap(t *testing.T) {
 		},
 	}
 
-	modifiedPod, err := getModifiedPod(pod, app)
+	fakeClient := kubeclientfake.NewSimpleClientset()
+	// Create ConfigMap in SparkApplication namespace with a `spark.properties` which is to SubPath patch into the existing Pod
+	// identified by the SparkApplication.Spec.sparkConfigMap
+	customSparkConfigMap := corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "spark-conf",
+			Namespace: sparkAppNamespace,
+		},
+		Data: map[string]string{
+			"spark.properties": "spark.driver.cores=2",
+		},
+	}
+	_, err := fakeClient.CoreV1().ConfigMaps(sparkAppNamespace).Create(context.TODO(), &customSparkConfigMap, metav1.CreateOptions{})
+	assert.Equal(t, nil, err)
+	if err != nil {
+		return
+	}
+
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app, fakeClient: fakeClient})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +646,7 @@ func TestPatchSparkPod_HadoopConfigMap(t *testing.T) {
 		},
 	}
 
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +700,7 @@ func TestPatchSparkPod_PrometheusConfigMaps(t *testing.T) {
 		},
 	}
 
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,7 +768,7 @@ func TestPatchSparkPod_Tolerations(t *testing.T) {
 		},
 	}
 
-	modifiedPod, err := getModifiedPod(pod, app)
+	modifiedPod, err := getModifiedPod(podModificationParams{pod: pod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -719,7 +832,7 @@ func TestPatchSparkPod_SecurityContext(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +857,7 @@ func TestPatchSparkPod_SecurityContext(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -792,7 +905,7 @@ func TestPatchSparkPod_SchedulerName(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -818,7 +931,7 @@ func TestPatchSparkPod_SchedulerName(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -865,7 +978,7 @@ func TestPatchSparkPod_PriorityClassName(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -873,7 +986,7 @@ func TestPatchSparkPod_PriorityClassName(t *testing.T) {
 	assert.Equal(t, priorityClassName, modifiedDriverPod.Spec.PriorityClassName)
 
 	var defaultPriority int32 = 0
-	var defaultPolicy corev1.PreemptionPolicy = corev1.PreemptLowerPriority
+	var defaultPolicy = corev1.PreemptLowerPriority
 	executorPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "spark-executor",
@@ -894,7 +1007,7 @@ func TestPatchSparkPod_PriorityClassName(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -960,7 +1073,7 @@ func TestPatchSparkPod_Sidecars(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -986,7 +1099,7 @@ func TestPatchSparkPod_Sidecars(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1051,7 +1164,7 @@ func TestPatchSparkPod_InitContainers(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1077,7 +1190,7 @@ func TestPatchSparkPod_InitContainers(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1129,7 +1242,7 @@ func TestPatchSparkPod_DNSConfig(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1154,7 +1267,7 @@ func TestPatchSparkPod_DNSConfig(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1202,7 +1315,7 @@ func TestPatchSparkPod_NodeSector(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1228,7 +1341,7 @@ func TestPatchSparkPod_NodeSector(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1395,7 +1508,7 @@ func TestPatchSparkPod_GPU(t *testing.T) {
 		if getResourceRequirements(test) != nil {
 			driverPod.Spec.Containers[0].Resources = *getResourceRequirements(test)
 		}
-		modifiedDriverPod, err := getModifiedPod(driverPod, app)
+		modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1421,7 +1534,7 @@ func TestPatchSparkPod_GPU(t *testing.T) {
 		if getResourceRequirements(test) != nil {
 			executorPod.Spec.Containers[0].Resources = *getResourceRequirements(test)
 		}
-		modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+		modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1475,7 +1588,7 @@ func TestPatchSparkPod_HostNetwork(t *testing.T) {
 			},
 		}
 
-		modifiedDriverPod, err := getModifiedPod(driverPod, app)
+		modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1503,7 +1616,7 @@ func TestPatchSparkPod_HostNetwork(t *testing.T) {
 			},
 		}
 
-		modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+		modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1587,7 +1700,7 @@ func TestPatchSparkPod_Env(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1597,7 +1710,7 @@ func TestPatchSparkPod_Env(t *testing.T) {
 	assert.Equal(t, exeEnvVal, modifiedExecutorPod.Spec.Containers[0].Env[0].Value)
 	assert.True(t, modifiedExecutorPod.Spec.Containers[0].Env[0].ValueFrom == nil)
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1697,7 +1810,7 @@ func TestPatchSparkPod_EnvFrom(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1705,7 +1818,7 @@ func TestPatchSparkPod_EnvFrom(t *testing.T) {
 	assert.Equal(t, configMapName, modifiedDriverPod.Spec.Containers[0].EnvFrom[0].ConfigMapRef.Name)
 	assert.Equal(t, secretName, modifiedDriverPod.Spec.Containers[0].EnvFrom[1].SecretRef.Name)
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1758,7 +1871,7 @@ func TestPatchSparkPod_GracePeriodSeconds(t *testing.T) {
 			},
 		}
 
-		modifiedDriverPod, err := getModifiedPod(driverPod, app)
+		modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1786,7 +1899,7 @@ func TestPatchSparkPod_GracePeriodSeconds(t *testing.T) {
 			},
 		}
 
-		modifiedExecPod, err := getModifiedPod(executorPod, app)
+		modifiedExecPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1834,80 +1947,11 @@ func TestPatchSparkPod_Lifecycle(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assert.Equal(t, preStopTest, modifiedDriverPod.Spec.Containers[0].Lifecycle.PreStop.Exec)
-}
-
-func getModifiedPod(pod *corev1.Pod, app *v1beta2.SparkApplication) (*corev1.Pod, error) {
-	// TODO parameterize client and move client response (= configMap mocks) outside into the test cases where needed
-	fakeClient := kubeclientfake.NewSimpleClientset()
-	sparkAppNamespace := "spark-apps"
-	// Create driver ConfigMap which holds the initial configuration for the SparkContext.
-	cm := corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ConfigMap",
-			APIVersion: "v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "spark-conf-volume-driver",
-			Namespace: sparkAppNamespace,
-		},
-		Data: map[string]string{
-			"spark.properties": "spark.driver.cores=1",
-			// FIXME put keys from upstream spark
-		},
-	}
-	_, err := fakeClient.CoreV1().ConfigMaps(sparkAppNamespace).Create(context.TODO(), &cm, metav1.CreateOptions{})
-	if err != nil {
-		return nil, err
-	}
-	// Create ConfigMap in SparkApplication namespace with a `spark.properties` which is to SubPath patch into the existing Pod
-	// identified by the SparkApplication.Spec.sparkConfigMap
-	cm1 := corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "ConfigMap",
-			APIVersion: "v1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "spark-conf",
-			Namespace: sparkAppNamespace,
-		},
-		Data: map[string]string{
-			"spark.properties": "spark.driver.cores=2",
-		},
-	}
-	_, err1 := fakeClient.CoreV1().ConfigMaps(sparkAppNamespace).Create(context.TODO(), &cm1, metav1.CreateOptions{})
-	if err1 != nil {
-		return nil, err1
-	}
-	// Exert patch op from the test case
-	patchOps := patchSparkPod(pod.DeepCopy(), app, fakeClient)
-	patchBytes, err := json.Marshal(patchOps)
-	if err != nil {
-		return nil, err
-	}
-	patch, err := jsonpatch.DecodePatch(patchBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	original, err := json.Marshal(pod)
-	if err != nil {
-		return nil, err
-	}
-	modified, err := patch.Apply(original)
-	if err != nil {
-		return nil, err
-	}
-	modifiedPod := &corev1.Pod{}
-	if err := json.Unmarshal(modified, modifiedPod); err != nil {
-		return nil, err
-	}
-
-	return modifiedPod, nil
 }
 
 func TestPatchSparkPod_HostAliases(t *testing.T) {
@@ -1974,7 +2018,7 @@ func TestPatchSparkPod_HostAliases(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2002,7 +2046,7 @@ func TestPatchSparkPod_HostAliases(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2051,7 +2095,7 @@ func TestPatchSparkPod_Ports(t *testing.T) {
 		},
 	}
 
-	modifiedDriverPod, err := getModifiedPod(driverPod, app)
+	modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2080,7 +2124,7 @@ func TestPatchSparkPod_Ports(t *testing.T) {
 		},
 	}
 
-	modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+	modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2155,12 +2199,12 @@ func TestPatchSparkPod_ShareProcessNamespace(t *testing.T) {
 			},
 		}
 
-		modifiedDriverPod, err := getModifiedPod(driverPod, app)
+		modifiedDriverPod, err := getModifiedPod(podModificationParams{pod: driverPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		modifiedExecutorPod, err := getModifiedPod(executorPod, app)
+		modifiedExecutorPod, err := getModifiedPod(podModificationParams{pod: executorPod, app: app})
 		if err != nil {
 			t.Fatal(err)
 		}

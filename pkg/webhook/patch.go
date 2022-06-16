@@ -19,6 +19,7 @@ package webhook
 import (
 	"context"
 	"fmt"
+	"github.com/magiconair/properties"
 	"strings"
 
 	"github.com/golang/glog"
@@ -350,8 +351,14 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 			glog.V(2).Infof("Found ConfigMap with data: %v", configMap.Data)
 			for key := range configMap.Data {
 				if key == config.DefaultSparkPropertiesFile {
-					glog.V(2).Infof("Ignoring spark.properties")
-					continue
+					patchSparkPropertiesFileFromConfigMap(
+						SparkPropertiesConfigMapPatch{
+							pod: pod, app: app, client: client, customSparkProperties: configMap.Data[key],
+						})
+					// TODO make a decision:
+					// [1.1] introduce new ConfigMap VS [1.2] overwrite existing ConfigMap
+					// if [1.2], what ConfigMap to overwrite?
+					// TODO make sure to SubPath mount the merged ConfigMap last
 				}
 				mountPath := fmt.Sprintf("%s/%s", config.DefaultSparkConfDir, key)
 				glog.V(2).Infof("Adding mountPath %v", mountPath)
@@ -934,4 +941,28 @@ func findVolumeMountIndex(container *corev1.Container) int {
 		}
 	}
 	return -1
+}
+
+type SparkPropertiesConfigMapPatch struct {
+	pod                    *corev1.Pod
+	app                    *v1beta2.SparkApplication
+	client                 kubernetes.Interface
+	customSparkProperties  string
+}
+
+func patchSparkPropertiesFileFromConfigMap(patch SparkPropertiesConfigMapPatch) *properties.Properties {
+	// must be driver pod
+	if !util.IsDriverPod(patch.pod) {
+		return nil
+	}
+	sparkDriverConfigMap, err := patch.client.CoreV1().ConfigMaps(patch.app.Namespace).Get(context.TODO(), config.SparkConfigMapVolumeDriverName, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	driverPropertiesConfig := sparkDriverConfigMap.Data[config.DefaultSparkPropertiesFile]
+	props, err := properties.LoadString(patch.customSparkProperties)
+	patchProps, err := properties.LoadString(driverPropertiesConfig)
+	props.Merge(patchProps)
+	glog.V(2).Infof("%s", patchProps)
+	return props
 }

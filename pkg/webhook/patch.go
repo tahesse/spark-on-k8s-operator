@@ -320,7 +320,7 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 		patchOps = append(patchOps, addConfigMapVolume(pod, *sparkConfigMapName, config.SparkConfigMapVolumeName))
 		containerIndex := findContainer(pod)
 		// Note: no error handling is done for `containerIndex == -1` because we anticipate the Pod to handle the Container lifecycle
-		glog.V(2).Infof("SubPath patching existing VolumeMounts: %v", pod.Spec.Containers[containerIndex].VolumeMounts)
+		glog.V(3).Infof("SubPath patching existing VolumeMounts: %v", pod.Spec.Containers[containerIndex].VolumeMounts)
 		volumeMountIndex := findVolumeMountIndex(&pod.Spec.Containers[containerIndex])
 		if volumeMountIndex >= 0 {
 			// Change existing VolumeMount to exclusively subPath `spark.properties`
@@ -346,7 +346,7 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 		}
 		// Patch custom sparkConfigMap from spec to have them subPath mounted
 		configMap, err := client.CoreV1().ConfigMaps(app.Namespace).Get(context.TODO(), *sparkConfigMapName, metav1.GetOptions{})
-		if err == nil && len(configMap.Data) > 0 {
+		if err == nil {
 			glog.V(2).Infof("Found ConfigMap with data: %v", configMap.Data)
 			for key := range configMap.Data {
 				if key == config.DefaultSparkPropertiesFile {
@@ -913,7 +913,6 @@ func addShareProcessNamespace(pod *corev1.Pod, app *v1beta2.SparkApplication) *p
 	return &patchOperation{Op: "add", Path: "/spec/shareProcessNamespace", Value: *shareProcessNamespace}
 }
 
-// SubPath support
 func addConfigMapVolumeMountSubPath(pod *corev1.Pod, configMapVolumeName string, mountPath string, subPath string) *patchOperation {
 	mount := corev1.VolumeMount{
 		Name:      configMapVolumeName,
@@ -925,8 +924,6 @@ func addConfigMapVolumeMountSubPath(pod *corev1.Pod, configMapVolumeName string,
 }
 
 func findVolumeMountIndex(container *corev1.Container) int {
-	// Find the driver or executor container in the pod.
-	// https://github.com/apache/spark/blob/32054e1e72edcc3bc34fb13267141e888d015578/resource-managers/kubernetes/core/src/main/scala/org/apache/spark/deploy/k8s/Constants.scala#L72-L73
 	for i := 0; i < len(container.VolumeMounts); i++ {
 		glog.V(2).Infof("Processing mount %v(name %v)", container.VolumeMounts[i], container.VolumeMounts[i].Name)
 		if container.VolumeMounts[i].Name == config.SparkConfigMapVolumeDriverName || container.VolumeMounts[i].Name == config.SparkConfigMapVolumeExecName {

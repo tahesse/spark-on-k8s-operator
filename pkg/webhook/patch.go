@@ -346,7 +346,7 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 		}
 		// Patch custom sparkConfigMap from spec to have them subPath mounted
 		configMap, err := client.CoreV1().ConfigMaps(app.Namespace).Get(context.TODO(), *sparkConfigMapName, metav1.GetOptions{})
-		if err == nil {
+		if err != nil {
 			glog.V(2).Infof("Found ConfigMap with data: %v", configMap.Data)
 			for key := range configMap.Data {
 				if key == config.DefaultSparkPropertiesFile {

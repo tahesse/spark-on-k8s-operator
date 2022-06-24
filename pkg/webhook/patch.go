@@ -311,7 +311,7 @@ func addEnvironmentVariable(pod *corev1.Pod, envName, envValue string) *patchOpe
 	---
 	Edge cases:
 	  * Handling of duplicate `spark.properties` files which carry the configuration for the driver and executor(s)
- */
+*/
 func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client kubernetes.Interface) []patchOperation {
 	var patchOps []patchOperation
 	sparkConfigMapName := app.Spec.SparkConfigMap

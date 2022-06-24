@@ -35,12 +35,12 @@ import (
 
 // We opt for a struct because it is more robust towards future declaration alterations
 type podModificationParams struct {
-	pod			*corev1.Pod
-	app			*v1beta2.SparkApplication
-	fakeClient  *kubeclientfake.Clientset
+	pod        *corev1.Pod
+	app        *v1beta2.SparkApplication
+	fakeClient *kubeclientfake.Clientset
 }
 
-func(params *podModificationParams) fillDefaults() {
+func (params *podModificationParams) fillDefaults() {
 	if params.fakeClient == nil {
 		params.fakeClient = kubeclientfake.NewSimpleClientset()
 	}
@@ -481,8 +481,8 @@ func TestPatchSparkPod_ReplaceSparkConfigMap(t *testing.T) {
 	sparkConfMapName := "spark-conf"
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "spark-test",
-			UID:  "spark-test-1",
+			Name:      "spark-test",
+			UID:       "spark-test-1",
 			Namespace: sparkAppNamespace,
 		},
 		Spec: v1beta2.SparkApplicationSpec{
@@ -553,8 +553,8 @@ func TestPatchSparkPod_AddSparkConfigMap(t *testing.T) {
 	sparkConfMapName := "spark-conf"
 	app := &v1beta2.SparkApplication{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "spark-test",
-			UID:  "spark-test-1",
+			Name:      "spark-test",
+			UID:       "spark-test-1",
 			Namespace: sparkAppNamespace,
 		},
 		Spec: v1beta2.SparkApplicationSpec{

@@ -311,7 +311,7 @@ func addEnvironmentVariable(pod *corev1.Pod, envName, envValue string) *patchOpe
 	  3. subPath all other keys from the sparkConfMap spec provided ConfigMap
 	---
 	Edge cases:
-	  * Handling of duplicate `spark.properties` files which carry the configuration for the driver and executor(s)
+	  * Handling of duplicate `spark.properties` files which carry the configuration for the driver
  */
 func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client kubernetes.Interface) []patchOperation {
 	var patchOps []patchOperation
@@ -347,19 +347,35 @@ func addSparkConfigMap(pod *corev1.Pod, app *v1beta2.SparkApplication, client ku
 		}
 		// Patch custom sparkConfigMap from spec to have them subPath mounted
 		configMap, err := client.CoreV1().ConfigMaps(app.Namespace).Get(context.TODO(), *sparkConfigMapName, metav1.GetOptions{})
-		if err == nil && len(configMap.Data) > 0 {
+		if err != nil {
+			if customSparkProperties, ok := configMap.Data[config.DefaultSparkPropertiesFile]; ok {
+				glog.V(2).Infof("Found spark.properties. Merging original into custom spark.properties file.")
+				mergedSparkProperties, err := patchSparkPropertiesFileFromConfigMap(
+					SparkPropertiesConfigMapPatch{
+						pod: pod, app: app, client: client, customSparkProperties: customSparkProperties,
+					})
+				if err != nil {
+					return nil
+				}
+				configMap.Data[config.DefaultSparkPropertiesFile] = mergedSparkProperties
+				//patchedConfigMap := &corev1.ConfigMap{
+				//	TypeMeta: metav1.TypeMeta{
+				//		Kind:       "ConfigMap",
+				//		APIVersion: "v1",
+				//	},
+				//	ObjectMeta: metav1.ObjectMeta{
+				//		Name:      *sparkConfigMapName,
+				//		Namespace: app.Namespace,
+				//	},
+				//	Data: configMap.Data,
+				//}
+				_, err = client.CoreV1().ConfigMaps(app.Namespace).Update(context.TODO(), configMap, metav1.UpdateOptions{})
+				if err != nil {
+					return nil
+				}
+			}
 			glog.V(2).Infof("Found ConfigMap with data: %v", configMap.Data)
 			for key := range configMap.Data {
-				if key == config.DefaultSparkPropertiesFile {
-					patchSparkPropertiesFileFromConfigMap(
-						SparkPropertiesConfigMapPatch{
-							pod: pod, app: app, client: client, customSparkProperties: configMap.Data[key],
-						})
-					// TODO make a decision:
-					// [1.1] introduce new ConfigMap VS [1.2] overwrite existing ConfigMap
-					// if [1.2], what ConfigMap to overwrite?
-					// TODO make sure to SubPath mount the merged ConfigMap last
-				}
 				mountPath := fmt.Sprintf("%s/%s", config.DefaultSparkConfDir, key)
 				glog.V(2).Infof("Adding mountPath %v", mountPath)
 				vspmPatchOp := addConfigMapVolumeMountSubPath(pod, config.SparkConfigMapVolumeName, mountPath, key)
@@ -950,19 +966,25 @@ type SparkPropertiesConfigMapPatch struct {
 	customSparkProperties  string
 }
 
-func patchSparkPropertiesFileFromConfigMap(patch SparkPropertiesConfigMapPatch) *properties.Properties {
+func patchSparkPropertiesFileFromConfigMap(patch SparkPropertiesConfigMapPatch) (string, error) {
 	// must be driver pod
 	if !util.IsDriverPod(patch.pod) {
-		return nil
+		return "", fmt.Errorf("failed because the pod is not a driver pod")
 	}
 	sparkDriverConfigMap, err := patch.client.CoreV1().ConfigMaps(patch.app.Namespace).Get(context.TODO(), config.SparkConfigMapVolumeDriverName, metav1.GetOptions{})
 	if err != nil {
-		return nil
+		return "", fmt.Errorf("unable to locate '%s' ConfigMap from driver pod", config.SparkConfigMapVolumeDriverName)
 	}
 	driverPropertiesConfig := sparkDriverConfigMap.Data[config.DefaultSparkPropertiesFile]
 	props, err := properties.LoadString(patch.customSparkProperties)
+	if err != nil {
+		return "", fmt.Errorf("failed to load custom spark.properties into properties struct")
+	}
 	patchProps, err := properties.LoadString(driverPropertiesConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to load original spark.properties into properties struct")
+	}
 	props.Merge(patchProps)
-	glog.V(2).Infof("%s", patchProps)
-	return props
+	glog.V(3).Infof("%s", patchProps)
+	return props.String(), nil
 }
